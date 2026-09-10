@@ -155,20 +155,30 @@ def transcribe(audio_path, run_cleanup):
     )
 
     cleaned = ""
+    
     if run_cleanup and raw_transcript:
-        # --- LLM mode: same checkpoint, adapter disabled, text-only ---
-        cleanup_prompt = (
-            "Clean up this raw speech transcript. Remove filler words (um, uh, like), "
-            "fix any obvious self-corrections (e.g. 'meet at 3, actually 2' -> 'meet at 2'), "
-            "and format it as clear written text. Return only the cleaned text, nothing else.\n\n"
-            f"Transcript: {raw_transcript} /no-think"
-        )
         with model.llm.disable_adapter():
             cleanup_ids = model.generate(
-                prompts=[[{"role": "user", "content": cleanup_prompt}]],
+                prompts=[[
+                    {"role": "user", "content": "Clean up this raw speech transcript. Remove filler "
+                        "words, fix self-corrections, and drop abandoned thoughts entirely — if the "
+                        "speaker starts a sentence, discards it, and restates their point, keep only "
+                        "the final resolved version.\n\n"
+                        "Transcript: Um so I wanted to, uh, talk about the the project timeline."},
+                    {"role": "assistant", "content": "I wanted to talk about the project timeline."},
+
+                    {"role": "user", "content": "Transcript: Let's meet at 3pm, actually no, let's "
+                        "make it 2pm instead."},
+                    {"role": "assistant", "content": "Let's meet at 2pm."},
+
+                    {"role": "user", "content": "Transcript: So my initial point was, um, well actually, that's not important. What I wanted to mention is that I'm preparing for a coding interview."},
+                    {"role": "assistant", "content": "I wanted to mention that I'm preparing for a coding interview."},
+                   
+                    {"role": "user", "content": f"Transcript: {raw_transcript} /no-think"},
+                ]],
                 max_new_tokens=512,
             )
-        cleaned = _extract_reply(model.tokenizer.ids_to_text(cleanup_ids[0].cpu()).strip())
+        cleaned = _extract_reply(model.tokenizer.ids_to_text(cleanup_ids[0].cpu()))
         # print(f"Cleaned transcript: {cleaned}")
         t2 = time.time()
         timing += f" | Cleanup pass: {t2 - t1:.1f}s"
@@ -210,7 +220,7 @@ with gr.Blocks(title="Canary-Qwen-2.5B Tester") as demo:
     )
 
 def main() -> None:
-    demo.launch(share=True)
+    demo.launch(server_name="0.0.0.0")
 
 
 if __name__ == "__main__":
