@@ -1,5 +1,5 @@
 """
-Canary-Qwen-2.5B tester — CPU mode.
+Canary-Qwen-2.5B tester — CUDA when available, otherwise CPU.
 
 What this does:
   1. Loads nvidia/canary-qwen-2.5b via NeMo's SALM class.
@@ -15,9 +15,8 @@ Known constraints (from the model card, not a bug in this script):
     debug it.
   - Max training audio length was 40s. Feed it short clips (5-20s) for
     now. Longer clips may still run but accuracy isn't guaranteed.
-  - CPU inference will be slow (tens of seconds per clip, not real-time).
-    That's fine for correctness testing. Don't judge latency until this
-    runs on your GPU again.
+  - CPU inference is slow (tens of seconds per clip). CUDA is used
+    automatically when torch.cuda.is_available() is true.
 
 Usage:
     pip install "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git" gradio soundfile librosa
@@ -39,25 +38,45 @@ MAX_AUDIO_SECONDS = 40  # hard model limit per the card
 
 _model = None
 _load_error = None
+_runtime = None  # {"device": torch.device, "label": str}
+
+
+def _select_runtime():
+    """Prefer CUDA (bf16/fp16) when a GPU is actually usable; otherwise CPU fp32."""
+    import torch
+
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        if torch.cuda.is_bf16_supported():
+            dtype, dtype_name = torch.bfloat16, "bfloat16"
+        else:
+            dtype, dtype_name = torch.float16, "float16"
+        gpu_name = torch.cuda.get_device_name(0)
+        label = f"cuda ({gpu_name}, {dtype_name})"
+        return device, dtype, label
+
+    return torch.device("cpu"), torch.float32, "cpu (float32)"
 
 
 def get_model():
     """Lazy-load so the Gradio UI shows up immediately, model loads on first use."""
-    global _model, _load_error
+    global _model, _load_error, _runtime
     if _model is not None:
         return _model
     if _load_error is not None:
         raise RuntimeError(_load_error)
     try:
-        import torch
         from nemo.collections.speechlm2.models import SALM
 
-        print(f"Loading {MODEL_ID} on CPU... this can take a few minutes the first time "
+        device, dtype, label = _select_runtime()
+        print(f"Loading {MODEL_ID} on {label}... this can take a few minutes the first time "
               f"(downloading ~5GB of weights + NeMo import overhead).")
         model = SALM.from_pretrained(MODEL_ID)
-        model = model.to(torch.device("cpu")).eval()
+        # NVIDIA's recommended GPU path for this checkpoint is .bfloat16().eval().to(cuda).
+        model = model.to(dtype=dtype).to(device).eval()
         _model = model
-        print("Model loaded.")
+        _runtime = {"device": device, "label": label}
+        print(f"Model loaded on {label}.")
         return _model
     except Exception as e:
         _load_error = (
@@ -65,6 +84,7 @@ def get_model():
             "Common causes:\n"
             "- NeMo not installed correctly (needs the git/trunk version, see docstring)\n"
             "- Missing system deps (libsndfile) for audio loading\n"
+            "- CUDA OOM (2.5B in bf16/fp16 wants ~6GB+ VRAM; the script falls back to CPU only if CUDA is unavailable)\n"
             "- Not enough RAM (2.5B params in fp32 needs ~10GB+ system RAM on CPU)"
         )
         raise RuntimeError(_load_error)
@@ -129,7 +149,10 @@ def transcribe(audio_path, run_cleanup):
     raw_transcript = _extract_reply(model.tokenizer.ids_to_text(answer_ids[0].cpu()).strip())
     t1 = time.time()
 
-    timing = f"Audio duration: {duration:.1f}s | ASR pass: {t1 - t0:.1f}s"
+    device_label = _runtime["label"] if _runtime else "unknown"
+    timing = (
+        f"Audio duration: {duration:.1f}s | ASR pass: {t1 - t0:.1f}s | device: {device_label}"
+    )
 
     cleaned = ""
     if run_cleanup and raw_transcript:
@@ -158,7 +181,8 @@ with gr.Blocks(title="Canary-Qwen-2.5B Tester") as demo:
         "# Canary-Qwen-2.5B — local test\n"
         "Record or upload a short clip (under 40s). English only — this will "
         "misbehave on Hinglish/other languages, and that's expected on this model. "
-        "Running on CPU, so expect it to take a while, not to be instant."
+        "Uses CUDA automatically when PyTorch can see a GPU; otherwise CPU "
+        "(CPU is slow — tens of seconds per clip)."
     )
 
     with gr.Row():

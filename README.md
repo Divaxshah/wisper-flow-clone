@@ -1,4 +1,4 @@
-# Canary-Qwen-2.5B local tester (CPU)
+# Canary-Qwen-2.5B local tester
 
 ## Setup
 
@@ -36,12 +36,19 @@ Open the local URL Gradio prints (usually http://127.0.0.1:7860).
    product names). See what it mangles — that's your future hotword/
    fine-tuning list.
 
+## Device
+
+The app picks CUDA automatically when `torch.cuda.is_available()` is true
+(bf16 if the GPU supports it, otherwise fp16). Otherwise it stays on CPU
+in fp32. The Gradio timing line reports which device actually ran.
+
+Hide the GPU (force CPU) with `CUDA_VISIBLE_DEVICES=""`.
+
 ## Known rough edges
 
 - CPU inference is slow. A 10s clip might take 20-40s for ASR alone, more
-  for the cleanup pass. This is expected — don't read anything into the
-  timing until you're back on GPU.
-- If model loading fails with a memory error, you likely need more system
-  RAM free — fp32 weights for a 2.5B model want ~10GB+ headroom.
+  for the cleanup pass. CUDA is much faster when a GPU is visible to PyTorch.
+- If model loading fails with a CUDA OOM, you need more VRAM — bf16/fp16
+  weights want ~6GB+ headroom. On CPU, fp32 wants ~10GB+ system RAM.
 - Audio over 40s gets truncated in this script (the model wasn't trained
   past that length) — you'll see it silently cut in `_load_and_resample`.
