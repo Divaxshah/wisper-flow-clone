@@ -58,9 +58,10 @@ startup (`OPENROUTER_API_KEY=...`); that file is gitignored.
 
 ## Device
 
-The app picks CUDA automatically when `torch.cuda.is_available()` is true
-(bf16 if the GPU supports it, otherwise fp16). Otherwise it stays on CPU
-in fp32. The Gradio timing line reports which device actually ran.
+The app picks CUDA automatically when `torch.cuda.is_available()` is true.
+Canary uses bf16/fp16 on GPU. Nemotron stays float32 on GPU — its streaming
+prompt path is not mixed-precision safe (you'll get `float != BFloat16` otherwise).
+On CPU both models use fp32. The Gradio timing line reports which device ran.
 
 Hide the GPU (force CPU) with `CUDA_VISIBLE_DEVICES=""`.
 

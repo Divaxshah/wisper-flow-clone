@@ -168,7 +168,15 @@ def get_nemotron_model():
         import nemo.collections.asr as nemo_asr
         from nemo.collections.asr.parts.submodules.rnnt_decoding import RNNTDecodingConfig
 
-        device, dtype, label = _select_runtime()
+        device, _dtype, _label = _select_runtime()
+        # Cache-aware streaming + language-ID prompt fusion is float32 in NeMo.
+        # Casting this checkpoint to bf16/fp16 makes preprocessor/prompt matmuls
+        # see float vs BFloat16. NVIDIA's Space keeps the model in fp32.
+        dtype = torch.float32
+        if device.type == "cuda":
+            label = f"cuda ({torch.cuda.get_device_name(0)}, float32)"
+        else:
+            label = "cpu (float32)"
         print(
             f"Loading {NEMOTRON_MODEL_ID} on {label}... first run downloads the checkpoint."
         )
@@ -281,7 +289,8 @@ def _stream_transcribe_file(asr_model, wav_path: str) -> str:
     from nemo.collections.asr.parts.utils.streaming_utils import CacheAwareStreamingAudioBuffer
 
     model_device = next(asr_model.parameters()).device
-    model_dtype = next(asr_model.parameters()).dtype
+    # Must match the streaming preprocessor and prompt kernel (both fp32 in NeMo).
+    stream_dtype = torch.float32
     streaming_buffer = CacheAwareStreamingAudioBuffer(
         model=asr_model,
         online_normalization=False,
@@ -292,13 +301,26 @@ def _stream_transcribe_file(asr_model, wav_path: str) -> str:
     cache_last_channel, cache_last_time, cache_last_channel_len = asr_model.encoder.get_initial_cache_state(
         batch_size=1
     )
+
+    def _move_cache(value):
+        if torch.is_tensor(value):
+            if value.is_floating_point():
+                return value.to(device=model_device, dtype=stream_dtype)
+            return value.to(device=model_device)
+        if isinstance(value, (list, tuple)):
+            return type(value)(_move_cache(item) for item in value)
+        return value
+
+    cache_last_channel = _move_cache(cache_last_channel)
+    cache_last_time = _move_cache(cache_last_time)
+    cache_last_channel_len = _move_cache(cache_last_channel_len)
     previous_hypotheses = None
     previous_pred_out = None
     text = ""
 
     for step_num, (chunk_audio, chunk_lengths) in enumerate(streaming_buffer):
         with torch.inference_mode():
-            chunk_audio = chunk_audio.to(device=model_device, dtype=model_dtype)
+            chunk_audio = chunk_audio.to(device=model_device, dtype=stream_dtype)
             chunk_lengths = chunk_lengths.to(device=model_device)
             (
                 previous_pred_out,
