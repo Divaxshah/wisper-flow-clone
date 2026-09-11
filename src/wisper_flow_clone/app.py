@@ -527,6 +527,7 @@ with gr.Blocks(title="Wisper Flow clone tester") as demo:
                 else "Paste an OpenRouter key below, or export OPENROUTER_API_KEY before launching."
             )
             gr.Markdown(
+                "> MUCH BETTER THAN CANARY-QWEN 2.5B"
                 "Multilingual cache-aware streaming ASR (`nvidia/nemotron-3.5-asr-streaming-0.6b`). "
                 "Pick a language (or auto-detect) and a latency/accuracy chunk size. "
                 "Optional cleanup goes through OpenRouter. "
@@ -592,7 +593,7 @@ with gr.Blocks(title="Wisper Flow clone tester") as demo:
 
 def main() -> None:
     load_models_at_startup()
-    demo.launch(server_name="0.0.0.0")
+    demo.launch(share=True, server_name="0.0.0.0")
 
 
 if __name__ == "__main__":
