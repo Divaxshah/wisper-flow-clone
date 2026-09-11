@@ -1,4 +1,4 @@
-# Canary-Qwen-2.5B local tester
+# Wisper Flow clone — local ASR tester
 
 ## Setup
 
@@ -21,7 +21,27 @@ Do not run `uv sync` after the NeMo pip install, or uv will remove it.
 uv run --no-sync wisper-flow-clone
 ```
 
-Open the local URL Gradio prints (usually http://127.0.0.1:7860).
+Open the local URL Gradio prints (usually http://127.0.0.1:7860). Models load
+**before** that URL is served, so the first Transcribe click does not wait on
+checkpoint restore.
+
+The UI has two tabs:
+
+- **Canary-Qwen 2.5B** — local ASR + cleanup from the same checkpoint (English-only).
+- **Nemotron 3.5 ASR** — multilingual cache-aware streaming ASR
+  (`nvidia/nemotron-3.5-asr-streaming-0.6b`), then optional cleanup via OpenRouter
+  (OpenAI SDK). Use the Latency dropdown to pick chunk size (80ms–1.12s).
+
+For the Nemotron tab, set an OpenRouter key before you tick cleanup:
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+# optional; defaults to openai/gpt-4o-mini
+export OPENROUTER_MODEL=openai/gpt-4o-mini
+```
+
+You can also paste the key into the tab. A project-root `.env` is loaded on
+startup (`OPENROUTER_API_KEY=...`); that file is gitignored.
 
 ## What to actually test tonight
 
@@ -30,8 +50,8 @@ Open the local URL Gradio prints (usually http://127.0.0.1:7860).
 2. The same sentence but rambled with "um"s and a mid-sentence correction
    ("let's meet at 3pm, actually no, 2pm"). See if the cleanup pass catches
    the correction the way Rambler/Wispr Flow do.
-3. A Hinglish sentence. Expect this to go badly — the model card says
-   English-only, this just confirms it firsthand and tells you how badly.
+3. A Hinglish sentence. On the Canary tab this will likely go badly (English-only).
+   Use the Nemotron tab with `auto` or `hi-IN` for Hindi / mixed speech.
 4. Something with your actual technical vocabulary (fine-tuning terms,
    product names). See what it mangles — that's your future hotword/
    fine-tuning list.
@@ -50,5 +70,7 @@ Hide the GPU (force CPU) with `CUDA_VISIBLE_DEVICES=""`.
   for the cleanup pass. CUDA is much faster when a GPU is visible to PyTorch.
 - If model loading fails with a CUDA OOM, you need more VRAM — bf16/fp16
   weights want ~6GB+ headroom. On CPU, fp32 wants ~10GB+ system RAM.
-- Audio over 40s gets truncated in this script (the model wasn't trained
-  past that length) — you'll see it silently cut in `_load_and_resample`.
+- Canary audio over 40s gets truncated (the model wasn't trained past that
+  length). Nemotron clips are capped at 180s to avoid blowing GPU memory.
+- Both models load at process start. Loading Canary + Nemotron on one GPU can
+  OOM; if that happens, only the model that fitted will be available.
